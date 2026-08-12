@@ -16,10 +16,15 @@ import net.dv8tion.jda.api.requests.restaction.ChannelAction;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 public class TicketListener extends ListenerAdapter {
     public static final String CLOSE_BUTTON_ID = "ticket-close-btn";
+
+    /** กันสร้างซ้ำตอนกดเร็ว / event มาซ้อน */
+    private static final Set<String> OPENING = ConcurrentHashMap.newKeySet();
 
     @Override
     public void onStringSelectInteraction(StringSelectInteractionEvent event) {
@@ -46,9 +51,15 @@ public class TicketListener extends ListenerAdapter {
             return;
         }
 
+        String lockKey = guild.getId() + ":" + member.getId();
         String existing = findOpenTicket(guild, member.getId());
         if (existing != null) {
             event.reply("คุณมี Ticket เปิดอยู่แล้ว: <#" + existing + ">").setEphemeral(true).queue();
+            return;
+        }
+
+        if (!OPENING.add(lockKey)) {
+            event.reply("กำลังสร้าง Ticket ให้อยู่แล้ว กรุณารอสักครู่").setEphemeral(true).queue();
             return;
         }
 
@@ -72,8 +83,16 @@ public class TicketListener extends ListenerAdapter {
             action.addPermissionOverride(supportRole, allow, denyNone);
         }
 
-        action.queue(channel -> openTicketMessage(event, channel, member, supportRole, selected),
-                error -> event.getHook().sendMessage("สร้าง Ticket ไม่สำเร็จ: " + error.getMessage()).queue());
+        action.queue(
+                channel -> {
+                    OPENING.remove(lockKey);
+                    openTicketMessage(event, channel, member, supportRole, selected);
+                },
+                error -> {
+                    OPENING.remove(lockKey);
+                    event.getHook().sendMessage("สร้าง Ticket ไม่สำเร็จ: " + error.getMessage()).queue();
+                }
+        );
     }
 
     @Override
@@ -137,16 +156,25 @@ public class TicketListener extends ListenerAdapter {
         return null;
     }
 
+    /** ชื่อห้องไม่ซ้ำ: ticket-{ชื่อ}-xxxxxx (ท้ายจาก User ID) */
     private String buildChannelName(Member member) {
         String cleaned = member.getUser().getName()
                 .toLowerCase()
-                .replaceAll("[^a-z0-9-]", "")
+                .replaceAll("[^a-z0-9]", "")
                 .replaceAll("-{2,}", "-");
-
-        String name = "ticket-" + cleaned;
-        if (name.length() < 8) {
-            name = "ticket-" + member.getId().substring(0, 6);
+        if (cleaned.length() > 20) {
+            cleaned = cleaned.substring(0, 20);
         }
+        if (cleaned.isBlank()) {
+            cleaned = "user";
+        }
+
+        String suffix = member.getId();
+        if (suffix.length() > 6) {
+            suffix = suffix.substring(suffix.length() - 6);
+        }
+
+        String name = "ticket-" + cleaned + "-" + suffix;
         if (name.length() > 90) {
             name = name.substring(0, 90);
         }
