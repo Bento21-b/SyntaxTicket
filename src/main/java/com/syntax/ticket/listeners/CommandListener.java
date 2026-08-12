@@ -181,24 +181,24 @@ public class CommandListener extends ListenerAdapter {
             return;
         }
 
-        if (!channel.getName().startsWith("ticket-")) {
-            event.reply("ช่องนี้ไม่ใช่ Ticket").setEphemeral(true).queue();
+        if (!TicketCloseHelper.isOpenTicketChannel(channel)) {
+            event.reply("ช่องนี้ไม่ใช่ Ticket ที่เปิดอยู่").setEphemeral(true).queue();
             return;
         }
 
         Member member = event.getMember();
-        boolean isStaff = canManageTickets(member);
-        boolean isOwner = channel.getTopic() != null
-                && member != null
-                && channel.getTopic().equals(member.getId());
-
-        if (!isStaff && !isOwner) {
+        if (!TicketCloseHelper.canCloseTicket(channel, member)) {
             event.reply("คุณปิด Ticket นี้ไม่ได้").setEphemeral(true).queue();
             return;
         }
 
-        event.reply("กำลังปิด Ticket ใน 3 วินาที...").queue(hook ->
-                channel.delete().reason("Ticket closed by " + event.getUser().getName()).queueAfter(3, java.util.concurrent.TimeUnit.SECONDS)
+        event.deferReply(true).queue();
+        TicketCloseHelper.closeTicket(
+                channel,
+                event.getGuild(),
+                member,
+                message -> event.getHook().sendMessage(message).queue(),
+                error -> event.getHook().sendMessage(error).queue()
         );
     }
 
@@ -218,6 +218,14 @@ public class CommandListener extends ListenerAdapter {
 
     static Category resolveCategory(Guild guild) {
         String categoryId = BotConfig.ticketCategoryId();
+        if (categoryId.isBlank()) {
+            return null;
+        }
+        return guild.getCategoryById(categoryId);
+    }
+
+    static Category resolveClosedCategory(Guild guild) {
+        String categoryId = BotConfig.closedTicketCategoryId();
         if (categoryId.isBlank()) {
             return null;
         }

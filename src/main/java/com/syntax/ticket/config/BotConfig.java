@@ -21,6 +21,10 @@ public final class BotConfig {
         return Bot.optionalEnv("TICKET_CATEGORY_ID", "");
     }
 
+    public static String closedTicketCategoryId() {
+        return Bot.optionalEnv("CLOSED_TICKET_CATEGORY_ID", "");
+    }
+
     public static String panelTitle() {
         return unescape(Bot.optionalEnv("PANEL_TITLE", "→ ticket for order 🪄✨"));
     }

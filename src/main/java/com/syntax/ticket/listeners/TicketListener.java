@@ -18,7 +18,6 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 
 public class TicketListener extends ListenerAdapter {
     public static final String CLOSE_BUTTON_ID = "ticket-close-btn";
@@ -52,7 +51,7 @@ public class TicketListener extends ListenerAdapter {
         }
 
         String lockKey = guild.getId() + ":" + member.getId();
-        String existing = findOpenTicket(guild, member.getId());
+        String existing = TicketCloseHelper.findOpenTicketId(guild, member.getId());
         if (existing != null) {
             event.reply("คุณมี Ticket เปิดอยู่แล้ว: <#" + existing + ">").setEphemeral(true).queue();
             return;
@@ -80,7 +79,7 @@ public class TicketListener extends ListenerAdapter {
             String lockKey
     ) {
         // เช็กอีกครั้งหลังได้สิทธิ์ตอบ interaction
-        String existingAfter = findOpenTicket(guild, member.getId());
+        String existingAfter = TicketCloseHelper.findOpenTicketId(guild, member.getId());
         if (existingAfter != null) {
             OPENING.remove(lockKey);
             event.getHook().sendMessage("คุณมี Ticket เปิดอยู่แล้ว: <#" + existingAfter + ">").queue();
@@ -123,26 +122,24 @@ public class TicketListener extends ListenerAdapter {
             return;
         }
 
-        if (!(event.getChannel() instanceof TextChannel channel) || !channel.getName().startsWith("ticket-")) {
-            event.reply("ใช้ได้เฉพาะในช่อง Ticket").setEphemeral(true).queue();
+        if (!(event.getChannel() instanceof TextChannel channel) || !TicketCloseHelper.isOpenTicketChannel(channel)) {
+            event.reply("ใช้ได้เฉพาะในช่อง Ticket ที่เปิดอยู่").setEphemeral(true).queue();
             return;
         }
 
         Member member = event.getMember();
-        boolean isStaff = CommandListener.canManageTickets(member);
-        boolean isOwner = channel.getTopic() != null
-                && member != null
-                && channel.getTopic().equals(member.getId());
-
-        if (!isStaff && !isOwner) {
+        if (!TicketCloseHelper.canCloseTicket(channel, member)) {
             event.reply("คุณปิด Ticket นี้ไม่ได้").setEphemeral(true).queue();
             return;
         }
 
-        event.reply("กำลังปิด Ticket ใน 3 วินาที...").queue(hook ->
-                channel.delete()
-                        .reason("Ticket closed by " + event.getUser().getName())
-                        .queueAfter(3, TimeUnit.SECONDS)
+        event.deferReply(true).queue();
+        TicketCloseHelper.closeTicket(
+                channel,
+                event.getGuild(),
+                member,
+                message -> event.getHook().sendMessage(message).queue(),
+                error -> event.getHook().sendMessage(error).queue()
         );
     }
 
@@ -167,15 +164,6 @@ public class TicketListener extends ListenerAdapter {
         event.getHook().sendMessage(
                 "เปิด Ticket **" + selected.label() + "** แล้ว: " + channel.getAsMention()
         ).queue();
-    }
-
-    private String findOpenTicket(Guild guild, String userId) {
-        for (TextChannel channel : guild.getTextChannels()) {
-            if (channel.getName().startsWith("ticket-") && userId.equals(channel.getTopic())) {
-                return channel.getId();
-            }
-        }
-        return null;
     }
 
     /** ชื่อห้องไม่ซ้ำ: ticket-{ชื่อ}-xxxxxx (ท้ายจาก User ID) */
