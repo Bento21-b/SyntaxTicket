@@ -1,0 +1,21 @@
+services:
+  - type: worker
+    name: syntax-ticket-bot
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: SUPPORT_ROLE_ID
+        sync: false
+      - key: TICKET_CATEGORY_ID
+        sync: false
+      - key: PANEL_TITLE
+        value: → ticket for order 🪄✨
+      - key: PANEL_DESCRIPTION
+        value: กดปุ่มด้านล่าง\n. สนใจเซ็ตติ้ง จิ้มเลย
+      - key: PANEL_FOOTER
+        value: Powered by Syntax
+      - key: PANEL_IMAGE_URL
+        sync: false

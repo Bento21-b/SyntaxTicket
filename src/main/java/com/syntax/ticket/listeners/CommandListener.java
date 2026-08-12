@@ -1,0 +1,145 @@
+package com.syntax.ticket.listeners;
+
+import com.syntax.ticket.config.BotConfig;
+import net.dv8tion.jda.api.EmbedBuilder;
+import net.dv8tion.jda.api.Permission;
+import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.Role;
+import net.dv8tion.jda.api.entities.channel.concrete.Category;
+import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
+import net.dv8tion.jda.api.events.session.ReadyEvent;
+import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
+import net.dv8tion.jda.api.interactions.commands.build.Commands;
+import net.dv8tion.jda.api.interactions.components.selections.StringSelectMenu;
+
+import java.util.EnumSet;
+import java.util.List;
+
+public class CommandListener extends ListenerAdapter {
+    public static final String SELECT_MENU_ID = "ticket-topic";
+
+    @Override
+    public void onReady(ReadyEvent event) {
+        event.getJDA().updateCommands()
+                .addCommands(
+                        Commands.slash("ticket-setup", "โพสต์แผงเปิด Ticket ในช่องนี้")
+                                .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_CHANNEL)),
+                        Commands.slash("ticket-close", "ปิด Ticket ในช่องนี้")
+                )
+                .queue();
+        System.out.println("Slash commands registered.");
+    }
+
+    @Override
+    public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
+        switch (event.getName()) {
+            case "ticket-setup" -> handleSetup(event);
+            case "ticket-close" -> handleClose(event);
+            default -> event.reply("คำสั่งไม่รู้จัก").setEphemeral(true).queue();
+        }
+    }
+
+    private void handleSetup(SlashCommandInteractionEvent event) {
+        if (event.getGuild() == null || event.getChannel() == null) {
+            event.reply("ใช้คำสั่งนี้ในเซิร์ฟเวอร์เท่านั้น").setEphemeral(true).queue();
+            return;
+        }
+
+        if (!canManageTickets(event.getMember())) {
+            event.reply("คุณไม่มีสิทธิ์ตั้งค่า Ticket").setEphemeral(true).queue();
+            return;
+        }
+
+        EmbedBuilder embed = BotConfig.panelEmbed();
+        List<BotConfig.TicketOption> options = BotConfig.selectOptions();
+        if (options.isEmpty()) {
+            event.reply("ยังไม่ได้ตั้งค่าตัวเลือก dropdown").setEphemeral(true).queue();
+            return;
+        }
+
+        StringSelectMenu.Builder menu = StringSelectMenu.create(SELECT_MENU_ID)
+                .setPlaceholder(BotConfig.selectPlaceholder());
+        for (BotConfig.TicketOption option : options) {
+            if (option.description() == null || option.description().isBlank()) {
+                menu.addOption(option.label(), option.value());
+            } else {
+                menu.addOption(option.label(), option.value(), option.description());
+            }
+        }
+
+        event.reply("โพสต์แผง Ticket แล้ว (" + options.size() + " หัวข้อ)").setEphemeral(true).queue();
+        event.getChannel().sendMessageEmbeds(embed.build())
+                .setActionRow(menu.build())
+                .queue();
+    }
+
+    private void handleClose(SlashCommandInteractionEvent event) {
+        if (!(event.getChannel() instanceof TextChannel channel)) {
+            event.reply("ใช้ในช่อง Ticket เท่านั้น").setEphemeral(true).queue();
+            return;
+        }
+
+        if (!channel.getName().startsWith("ticket-")) {
+            event.reply("ช่องนี้ไม่ใช่ Ticket").setEphemeral(true).queue();
+            return;
+        }
+
+        Member member = event.getMember();
+        boolean isStaff = canManageTickets(member);
+        boolean isOwner = channel.getTopic() != null
+                && member != null
+                && channel.getTopic().equals(member.getId());
+
+        if (!isStaff && !isOwner) {
+            event.reply("คุณปิด Ticket นี้ไม่ได้").setEphemeral(true).queue();
+            return;
+        }
+
+        event.reply("กำลังปิด Ticket ใน 3 วินาที...").queue(hook ->
+                channel.delete().reason("Ticket closed by " + event.getUser().getName()).queueAfter(3, java.util.concurrent.TimeUnit.SECONDS)
+        );
+    }
+
+    static boolean canManageTickets(Member member) {
+        if (member == null) {
+            return false;
+        }
+        if (member.hasPermission(Permission.ADMINISTRATOR) || member.hasPermission(Permission.MANAGE_CHANNEL)) {
+            return true;
+        }
+        String supportRoleId = BotConfig.supportRoleId();
+        if (supportRoleId.isBlank()) {
+            return false;
+        }
+        return member.getRoles().stream().anyMatch(role -> role.getId().equals(supportRoleId));
+    }
+
+    static Category resolveCategory(Guild guild) {
+        String categoryId = BotConfig.ticketCategoryId();
+        if (categoryId.isBlank()) {
+            return null;
+        }
+        return guild.getCategoryById(categoryId);
+    }
+
+    static Role resolveSupportRole(Guild guild) {
+        String roleId = BotConfig.supportRoleId();
+        if (roleId.isBlank()) {
+            return null;
+        }
+        return guild.getRoleById(roleId);
+    }
+
+    static EnumSet<Permission> ticketPermissions() {
+        return EnumSet.of(
+                Permission.VIEW_CHANNEL,
+                Permission.MESSAGE_SEND,
+                Permission.MESSAGE_HISTORY,
+                Permission.MESSAGE_ATTACH_FILES,
+                Permission.MESSAGE_EMBED_LINKS
+        );
+    }
+}
