@@ -5,16 +5,21 @@ import net.dv8tion.jda.api.EmbedBuilder;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
 import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.DefaultMemberPermissions;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
+import net.dv8tion.jda.api.interactions.components.ActionComponent;
+import net.dv8tion.jda.api.interactions.components.ActionRow;
 import net.dv8tion.jda.api.interactions.components.selections.StringSelectMenu;
 
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 
@@ -25,12 +30,12 @@ public class CommandListener extends ListenerAdapter {
     public void onReady(ReadyEvent event) {
         event.getJDA().updateCommands()
                 .addCommands(
-                        Commands.slash("ticket-setup", "โพสต์แผงเปิด Ticket ในช่องนี้")
+                        Commands.slash("ticket-setup", "โพสต์แผงเปิด Ticket ในช่องนี้ (ลบแผงเก่าออกก่อน)")
                                 .setDefaultPermissions(DefaultMemberPermissions.enabledFor(Permission.MANAGE_CHANNEL)),
                         Commands.slash("ticket-close", "ปิด Ticket ในช่องนี้")
                 )
                 .queue();
-        System.out.println("Slash commands registered.");
+        System.out.println("Slash commands registered. Bot user: " + event.getJDA().getSelfUser().getAsTag());
     }
 
     @Override
@@ -43,8 +48,14 @@ public class CommandListener extends ListenerAdapter {
     }
 
     private void handleSetup(SlashCommandInteractionEvent event) {
-        if (event.getGuild() == null || event.getChannel() == null) {
+        if (event.getGuild() == null) {
             event.reply("ใช้คำสั่งนี้ในเซิร์ฟเวอร์เท่านั้น").setEphemeral(true).queue();
+            return;
+        }
+
+        MessageChannel channel = event.getChannel();
+        if (channel == null) {
+            event.reply("ใช้คำสั่งนี้ในช่องข้อความเท่านั้น").setEphemeral(true).queue();
             return;
         }
 
@@ -53,13 +64,15 @@ public class CommandListener extends ListenerAdapter {
             return;
         }
 
-        EmbedBuilder embed = BotConfig.panelEmbed();
         List<BotConfig.TicketOption> options = BotConfig.selectOptions();
         if (options.isEmpty()) {
             event.reply("ยังไม่ได้ตั้งค่าตัวเลือก dropdown").setEphemeral(true).queue();
             return;
         }
 
+        event.deferReply(true).queue();
+
+        EmbedBuilder embed = BotConfig.panelEmbed();
         StringSelectMenu.Builder menu = StringSelectMenu.create(SELECT_MENU_ID)
                 .setPlaceholder(BotConfig.selectPlaceholder());
         for (BotConfig.TicketOption option : options) {
@@ -70,10 +83,61 @@ public class CommandListener extends ListenerAdapter {
             }
         }
 
-        event.reply("โพสต์แผง Ticket แล้ว (" + options.size() + " หัวข้อ)").setEphemeral(true).queue();
-        event.getChannel().sendMessageEmbeds(embed.build())
-                .setActionRow(menu.build())
-                .queue();
+        // ลบแผงเก่าของบอทนี้ในช่องก่อน แล้วค่อยโพสต์แผงเดียว
+        channel.getIterableHistory()
+                .takeAsync(50)
+                .thenAccept(messages -> {
+                    List<Message> oldPanels = new ArrayList<>();
+                    for (Message message : messages) {
+                        if (message.getAuthor().getIdLong() == event.getJDA().getSelfUser().getIdLong()
+                                && isTicketPanel(message)) {
+                            oldPanels.add(message);
+                        }
+                    }
+
+                    Runnable postPanel = () -> channel.sendMessageEmbeds(embed.build())
+                            .setActionRow(menu.build())
+                            .queue(
+                                    sent -> event.getHook().sendMessage(
+                                            "โพสต์แผง Ticket แล้ว (" + options.size() + " หัวข้อ)"
+                                                    + (oldPanels.isEmpty() ? "" : " · ลบแผงเก่า " + oldPanels.size() + " อัน")
+                                    ).queue(),
+                                    error -> event.getHook().sendMessage(
+                                            "โพสต์แผงไม่สำเร็จ: " + error.getMessage()
+                                    ).queue()
+                            );
+
+                    if (oldPanels.isEmpty()) {
+                        postPanel.run();
+                        return;
+                    }
+
+                    @SuppressWarnings("unchecked")
+                    java.util.concurrent.CompletableFuture<Void>[] futures = channel.purgeMessages(oldPanels)
+                            .toArray(new java.util.concurrent.CompletableFuture[0]);
+                    java.util.concurrent.CompletableFuture.allOf(futures)
+                            .whenComplete((ok, err) -> postPanel.run());
+                })
+                .exceptionally(err -> {
+                    channel.sendMessageEmbeds(embed.build())
+                            .setActionRow(menu.build())
+                            .queue();
+                    event.getHook().sendMessage(
+                            "โพสต์แผง Ticket แล้ว (ลบแผงเก่าไม่สำเร็จ: " + err.getMessage() + ")"
+                    ).queue();
+                    return null;
+                });
+    }
+
+    private boolean isTicketPanel(Message message) {
+        for (ActionRow row : message.getActionRows()) {
+            for (ActionComponent component : row.getActionComponents()) {
+                if (SELECT_MENU_ID.equals(component.getId())) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void handleClose(SlashCommandInteractionEvent event) {
