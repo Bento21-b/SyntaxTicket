@@ -21,7 +21,16 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class TicketListener extends ListenerAdapter {
     public static final String CLOSE_BUTTON_ID = "ticket-close-btn";
+    public static final String OPEN_BUTTON_ID = "ticket-open-btn";
     public static final String DELETE_BUTTON_ID = "ticket-delete-btn";
+
+    public static Button[] ticketActionButtons() {
+        return new Button[] {
+                Button.danger(CLOSE_BUTTON_ID, "ปิด Ticket"),
+                Button.success(OPEN_BUTTON_ID, "Open"),
+                Button.danger(DELETE_BUTTON_ID, "Delete")
+        };
+    }
 
     /** กันสร้างซ้ำตอนกดเร็ว / event มาซ้อน */
     private static final Set<String> OPENING = ConcurrentHashMap.newKeySet();
@@ -125,6 +134,10 @@ public class TicketListener extends ListenerAdapter {
         }
         if (DELETE_BUTTON_ID.equals(event.getComponentId())) {
             handleDeleteButton(event);
+            return;
+        }
+        if (OPEN_BUTTON_ID.equals(event.getComponentId())) {
+            handleOpenButton(event);
         }
     }
 
@@ -183,6 +196,39 @@ public class TicketListener extends ListenerAdapter {
         );
     }
 
+    private void handleOpenButton(ButtonInteractionEvent event) {
+        if (!(event.getChannel() instanceof TextChannel channel)) {
+            event.reply("ใช้ได้เฉพาะในช่อง Ticket").setEphemeral(true).queue();
+            return;
+        }
+
+        Member member = event.getMember();
+        if (!CommandListener.canManageTickets(member)) {
+            event.reply("เฉพาะทีมงานเท่านั้นที่เปิด Ticket ได้").setEphemeral(true).queue();
+            return;
+        }
+
+        Guild guild = event.getGuild();
+        if (guild == null) {
+            event.reply("ใช้ได้เฉพาะในเซิร์ฟเวอร์").setEphemeral(true).queue();
+            return;
+        }
+
+        if (!TicketCloseHelper.isClosedTicketChannel(channel, guild)) {
+            event.reply("เปิดได้เฉพาะ Ticket ในหมวด closeticket").setEphemeral(true).queue();
+            return;
+        }
+
+        event.deferReply(true).queue();
+        TicketCloseHelper.reopenTicket(
+                channel,
+                guild,
+                member,
+                message -> event.getHook().sendMessage(message).queue(),
+                error -> event.getHook().sendMessage(error).queue()
+        );
+    }
+
     private void openTicketMessage(
             StringSelectInteractionEvent event,
             TextChannel channel,
@@ -198,10 +244,7 @@ public class TicketListener extends ListenerAdapter {
 
         channel.sendMessage(mention)
                 .addEmbeds(welcome.build())
-                .setActionRow(
-                        Button.danger(CLOSE_BUTTON_ID, "ปิด Ticket"),
-                        Button.danger(DELETE_BUTTON_ID, "Delete")
-                )
+                .setActionRow(ticketActionButtons())
                 .queue();
 
         event.getHook().sendMessage(
