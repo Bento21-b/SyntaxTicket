@@ -70,8 +70,17 @@ public class CommandListener extends ListenerAdapter {
             return;
         }
 
-        event.deferReply(true).queue();
+        event.deferReply(true).queue(
+                success -> postFreshPanel(event, channel, options),
+                error -> System.out.println("ticket-setup skipped (another instance handled it): " + error.getMessage())
+        );
+    }
 
+    private void postFreshPanel(
+            SlashCommandInteractionEvent event,
+            MessageChannel channel,
+            List<BotConfig.TicketOption> options
+    ) {
         EmbedBuilder embed = BotConfig.panelEmbed();
         StringSelectMenu.Builder menu = StringSelectMenu.create(SELECT_MENU_ID)
                 .setPlaceholder(BotConfig.selectPlaceholder());
@@ -83,7 +92,6 @@ public class CommandListener extends ListenerAdapter {
             }
         }
 
-        // ลบแผงเก่าของบอทนี้ในช่องก่อน แล้วค่อยโพสต์แผงเดียว
         channel.getIterableHistory()
                 .takeAsync(50)
                 .thenAccept(messages -> {
@@ -98,10 +106,14 @@ public class CommandListener extends ListenerAdapter {
                     Runnable postPanel = () -> channel.sendMessageEmbeds(embed.build())
                             .setActionRow(menu.build())
                             .queue(
-                                    sent -> event.getHook().sendMessage(
-                                            "โพสต์แผง Ticket แล้ว (" + options.size() + " หัวข้อ)"
-                                                    + (oldPanels.isEmpty() ? "" : " · ลบแผงเก่า " + oldPanels.size() + " อัน")
-                                    ).queue(),
+                                    sent -> {
+                                        event.getHook().sendMessage(
+                                                "โพสต์แผง Ticket แล้ว (" + options.size() + " หัวข้อ)"
+                                                        + (oldPanels.isEmpty() ? "" : " · ลบแผงเก่า " + oldPanels.size() + " อัน")
+                                        ).queue();
+                                        // กันแผงซ้ำจากบอทซ้อน: เหลือไว้แค่แผงล่าสุด
+                                        dedupePanelsKeepNewest(channel, event.getJDA().getSelfUser().getIdLong());
+                                    },
                                     error -> event.getHook().sendMessage(
                                             "โพสต์แผงไม่สำเร็จ: " + error.getMessage()
                                     ).queue()
@@ -121,12 +133,35 @@ public class CommandListener extends ListenerAdapter {
                 .exceptionally(err -> {
                     channel.sendMessageEmbeds(embed.build())
                             .setActionRow(menu.build())
-                            .queue();
+                            .queue(sent -> dedupePanelsKeepNewest(channel, event.getJDA().getSelfUser().getIdLong()));
                     event.getHook().sendMessage(
                             "โพสต์แผง Ticket แล้ว (ลบแผงเก่าไม่สำเร็จ: " + err.getMessage() + ")"
                     ).queue();
                     return null;
                 });
+    }
+
+    /** เหลือแผงล่าสุดอันเดียว ลบอันเก่าที่ซ้อน */
+    private void dedupePanelsKeepNewest(MessageChannel channel, long botUserId) {
+        channel.getJDA().getGatewayPool().schedule(() -> {
+            try {
+                List<Message> recent = channel.getHistory().retrievePast(20).complete();
+                List<Message> panels = new ArrayList<>();
+                for (Message message : recent) {
+                    if (message.getAuthor().getIdLong() == botUserId && isTicketPanel(message)) {
+                        panels.add(message);
+                    }
+                }
+                if (panels.size() <= 1) {
+                    return;
+                }
+                // history = ใหม่สุดก่อน → เก็บ index 0 ลบที่เหลือ
+                List<Message> duplicates = panels.subList(1, panels.size());
+                channel.purgeMessages(duplicates);
+            } catch (Exception e) {
+                System.out.println("dedupe panels failed: " + e.getMessage());
+            }
+        }, 2, java.util.concurrent.TimeUnit.SECONDS);
     }
 
     private boolean isTicketPanel(Message message) {

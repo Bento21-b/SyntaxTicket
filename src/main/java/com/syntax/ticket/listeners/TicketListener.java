@@ -63,7 +63,29 @@ public class TicketListener extends ListenerAdapter {
             return;
         }
 
-        event.deferReply(true).queue();
+        event.deferReply(true).queue(
+                success -> createTicketChannel(event, guild, member, selected, lockKey),
+                error -> {
+                    OPENING.remove(lockKey);
+                    System.out.println("ticket open skipped (another instance handled it): " + error.getMessage());
+                }
+        );
+    }
+
+    private void createTicketChannel(
+            StringSelectInteractionEvent event,
+            Guild guild,
+            Member member,
+            BotConfig.TicketOption selected,
+            String lockKey
+    ) {
+        // เช็กอีกครั้งหลังได้สิทธิ์ตอบ interaction
+        String existingAfter = findOpenTicket(guild, member.getId());
+        if (existingAfter != null) {
+            OPENING.remove(lockKey);
+            event.getHook().sendMessage("คุณมี Ticket เปิดอยู่แล้ว: <#" + existingAfter + ">").queue();
+            return;
+        }
 
         String channelName = buildChannelName(member);
         Category category = CommandListener.resolveCategory(guild);
