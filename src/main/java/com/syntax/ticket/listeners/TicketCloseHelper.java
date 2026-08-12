@@ -116,6 +116,46 @@ final class TicketCloseHelper {
         return topic != null && topic.equals(member.getId());
     }
 
+    static boolean isClosedTicketChannel(TextChannel channel, Guild guild) {
+        if (channel == null || guild == null) {
+            return false;
+        }
+        Category closedCategory = CommandListener.resolveClosedCategory(guild);
+        if (closedCategory == null) {
+            return false;
+        }
+        if (channel.getParentCategory() == null
+                || !channel.getParentCategory().getId().equals(closedCategory.getId())) {
+            return false;
+        }
+        String topic = channel.getTopic();
+        return channel.getName().startsWith("closed-")
+                || (topic != null && topic.startsWith(CLOSED_TOPIC_PREFIX));
+    }
+
+    static void deleteTicket(
+            TextChannel channel,
+            Guild guild,
+            Member deletedBy,
+            Runnable onSuccess,
+            Consumer<String> onFailure
+    ) {
+        if (!isClosedTicketChannel(channel, guild)) {
+            onFailure.accept("ลบได้เฉพาะ Ticket ในหมวด closeticket");
+            return;
+        }
+        if (!CommandListener.canManageTickets(deletedBy)) {
+            onFailure.accept("คุณไม่มีสิทธิ์ลบ Ticket");
+            return;
+        }
+
+        String deletedByName = deletedBy == null ? "unknown" : deletedBy.getEffectiveName();
+        channel.delete().reason("Ticket deleted by " + deletedByName).queue(
+                ok -> onSuccess.run(),
+                error -> onFailure.accept("ลบ Ticket ไม่สำเร็จ: " + error.getMessage())
+        );
+    }
+
     private static String toClosedName(String currentName) {
         if (currentName.startsWith("closed-")) {
             return currentName.length() > 100 ? currentName.substring(0, 100) : currentName;
