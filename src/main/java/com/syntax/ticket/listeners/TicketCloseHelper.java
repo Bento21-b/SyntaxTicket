@@ -3,7 +3,6 @@ package com.syntax.ticket.listeners;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
-import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 
@@ -11,21 +10,33 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.EnumSet;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 final class TicketCloseHelper {
     static final String CLOSED_TOPIC_PREFIX = "closed:";
 
+    private static final Set<String> PROCESSING = ConcurrentHashMap.newKeySet();
+
     private TicketCloseHelper() {}
+
+    static boolean beginProcessing(String channelId) {
+        return PROCESSING.add(channelId);
+    }
+
+    static void endProcessing(String channelId) {
+        PROCESSING.remove(channelId);
+    }
 
     static boolean isOpenTicketChannel(TextChannel channel) {
         if (channel == null) {
             return false;
         }
-        String name = channel.getName();
-        if (name.startsWith("closed-")) {
+        if (isClosedTicketChannel(channel, channel.getGuild())) {
             return false;
         }
+        String name = channel.getName();
         if (!name.startsWith("ticket-")) {
             return false;
         }
@@ -44,7 +55,8 @@ final class TicketCloseHelper {
                     && channel.getParentCategory().getId().equals(closedCategory.getId())) {
                 continue;
             }
-            if (userId.equals(channel.getTopic())) {
+            String ownerId = extractOwnerId(channel.getTopic());
+            if (userId.equals(ownerId)) {
                 return channel.getId();
             }
         }
@@ -58,7 +70,13 @@ final class TicketCloseHelper {
             Consumer<String> onSuccess,
             Consumer<String> onFailure
     ) {
-        if (!isOpenTicketChannel(channel)) {
+        TextChannel fresh = guild.getTextChannelById(channel.getId());
+        if (fresh == null) {
+            onFailure.accept("ไม่พบช่อง Ticket");
+            return;
+        }
+
+        if (!isOpenTicketChannel(fresh)) {
             onFailure.accept("ช่องนี้ถูกปิดไปแล้ว");
             return;
         }
@@ -69,40 +87,45 @@ final class TicketCloseHelper {
             return;
         }
 
-        String ownerId = channel.getTopic();
-        String closedName = toClosedName(channel.getName());
+        String ownerId = extractOwnerId(fresh.getTopic());
+        String closedName = toClosedName(fresh.getName());
         String closedTopic = CLOSED_TOPIC_PREFIX + (ownerId == null ? "unknown" : ownerId);
         String closedByMention = closedBy == null ? "unknown" : closedBy.getAsMention();
         String time = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
                 .withZone(ZoneId.of("Asia/Bangkok"))
                 .format(Instant.now());
 
-        var manager = channel.getManager()
+        Runnable moveToClosed = () -> fresh.getManager()
                 .setParent(closedCategory)
                 .setName(closedName)
-                .setTopic(closedTopic);
-
-        if (ownerId != null && !ownerId.isBlank()) {
-            Member owner = guild.getMemberById(ownerId);
-            if (owner != null) {
-                manager = manager.putPermissionOverride(
-                        owner,
-                        0L,
-                        Permission.VIEW_CHANNEL.getRawValue()
+                .setTopic(closedTopic)
+                .queue(
+                        ok -> fresh.sendMessage(
+                                "🔒 Ticket ถูกปิดแล้ว\n"
+                                        + "ปิดโดย: " + closedByMention + "\n"
+                                        + "เวลา: " + time
+                        ).queue(
+                                sent -> onSuccess.accept(
+                                        "ย้าย Ticket ไปหมวด **" + closedCategory.getName() + "** แล้ว"
+                                ),
+                                err -> onSuccess.accept("ย้าย Ticket แล้ว แต่ส่งข้อความปิดไม่สำเร็จ")
+                        ),
+                        error -> onFailure.accept("ปิด Ticket ไม่สำเร็จ: " + error.getMessage())
                 );
-            }
+
+        if (ownerId == null || ownerId.isBlank()) {
+            moveToClosed.run();
+            return;
         }
 
-        manager.queue(
-                ok -> channel.sendMessage(
-                        "🔒 Ticket ถูกปิดแล้ว\n"
-                                + "ปิดโดย: " + closedByMention + "\n"
-                                + "เวลา: " + time
-                ).queue(
-                        sent -> onSuccess.accept("ย้าย Ticket ไปหมวด **" + closedCategory.getName() + "** แล้ว"),
-                        err -> onSuccess.accept("ย้าย Ticket แล้ว แต่ส่งข้อความปิดไม่สำเร็จ")
-                ),
-                error -> onFailure.accept("ปิด Ticket ไม่สำเร็จ: " + error.getMessage())
+        guild.retrieveMemberById(ownerId).queue(
+                owner -> fresh.upsertPermissionOverride(owner)
+                        .deny(Permission.VIEW_CHANNEL)
+                        .queue(
+                                ok -> moveToClosed.run(),
+                                err -> moveToClosed.run()
+                        ),
+                err -> moveToClosed.run()
         );
     }
 
@@ -113,8 +136,8 @@ final class TicketCloseHelper {
         if (CommandListener.canManageTickets(member)) {
             return true;
         }
-        String topic = channel.getTopic();
-        return topic != null && topic.equals(member.getId());
+        String ownerId = extractOwnerId(channel.getTopic());
+        return ownerId != null && ownerId.equals(member.getId());
     }
 
     static boolean isClosedTicketChannel(TextChannel channel, Guild guild) {
@@ -164,7 +187,13 @@ final class TicketCloseHelper {
             Consumer<String> onSuccess,
             Consumer<String> onFailure
     ) {
-        if (!isClosedTicketChannel(channel, guild)) {
+        TextChannel fresh = guild.getTextChannelById(channel.getId());
+        if (fresh == null) {
+            onFailure.accept("ไม่พบช่อง Ticket");
+            return;
+        }
+
+        if (!isClosedTicketChannel(fresh, guild)) {
             onFailure.accept("เปิดได้เฉพาะ Ticket ในหมวด closeticket");
             return;
         }
@@ -173,48 +202,57 @@ final class TicketCloseHelper {
             return;
         }
 
-        String ownerId = extractOwnerId(channel.getTopic());
+        String ownerId = extractOwnerId(fresh.getTopic());
         if (ownerId != null && !ownerId.isBlank()) {
             String existing = findOpenTicketId(guild, ownerId);
-            if (existing != null) {
+            if (existing != null && !existing.equals(fresh.getId())) {
                 onFailure.accept("เจ้าของ Ticket มีห้องเปิดอยู่แล้ว: <#" + existing + ">");
                 return;
             }
         }
 
         Category openCategory = CommandListener.resolveCategory(guild);
-        String openName = toOpenName(channel.getName());
+        String openName = toOpenName(fresh.getName());
         String reopenedByMention = reopenedBy == null ? "unknown" : reopenedBy.getAsMention();
+        EnumSet<Permission> allow = CommandListener.ticketPermissions();
 
-        var manager = channel.getManager()
-                .setName(openName)
-                .setTopic(ownerId);
-
-        if (openCategory != null) {
-            manager = manager.setParent(openCategory);
-        }
-
-        if (ownerId != null && !ownerId.isBlank()) {
-            Member owner = guild.getMemberById(ownerId);
-            if (owner != null) {
-                EnumSet<Permission> allow = CommandListener.ticketPermissions();
-                manager = manager.putPermissionOverride(owner, allow, EnumSet.noneOf(Permission.class));
+        Runnable moveToOpen = () -> {
+            var manager = fresh.getManager()
+                    .setName(openName)
+                    .setTopic(ownerId);
+            if (openCategory != null) {
+                manager = manager.setParent(openCategory);
             }
+            manager.queue(
+                    ok -> fresh.sendMessage(
+                            "🔓 Ticket ถูกเปิดใหม่แล้ว\n"
+                                    + "เปิดโดย: " + reopenedByMention
+                    ).queue(
+                            sent -> onSuccess.accept("ย้าย Ticket กลับไปหมวดเปิดแล้ว"),
+                            err -> onSuccess.accept("เปิด Ticket แล้ว แต่ส่งข้อความไม่สำเร็จ")
+                    ),
+                    error -> onFailure.accept("เปิด Ticket ไม่สำเร็จ: " + error.getMessage())
+            );
+        };
+
+        if (ownerId == null || ownerId.isBlank()) {
+            moveToOpen.run();
+            return;
         }
 
-        manager.queue(
-                ok -> channel.sendMessage(
-                        "🔓 Ticket ถูกเปิดใหม่แล้ว\n"
-                                + "เปิดโดย: " + reopenedByMention
-                ).queue(
-                        sent -> onSuccess.accept("ย้าย Ticket กลับไปหมวดเปิดแล้ว"),
-                        err -> onSuccess.accept("เปิด Ticket แล้ว แต่ส่งข้อความไม่สำเร็จ")
-                ),
-                error -> onFailure.accept("เปิด Ticket ไม่สำเร็จ: " + error.getMessage())
+        guild.retrieveMemberById(ownerId).queue(
+                owner -> fresh.upsertPermissionOverride(owner)
+                        .grant(allow)
+                        .clear(Permission.VIEW_CHANNEL)
+                        .queue(
+                                ok -> moveToOpen.run(),
+                                err -> moveToOpen.run()
+                        ),
+                err -> moveToOpen.run()
         );
     }
 
-    private static String extractOwnerId(String topic) {
+    static String extractOwnerId(String topic) {
         if (topic == null || topic.isBlank()) {
             return null;
         }
@@ -226,18 +264,19 @@ final class TicketCloseHelper {
     }
 
     private static String toOpenName(String currentName) {
-        if (currentName.startsWith("closed-")) {
-            String name = currentName.substring("closed-".length());
-            return name.length() > 100 ? name.substring(0, 100) : name;
+        String name = currentName;
+        while (name.startsWith("closed-")) {
+            name = name.substring("closed-".length());
         }
-        return currentName.length() > 100 ? currentName.substring(0, 100) : currentName;
+        if (name.length() > 100) {
+            name = name.substring(0, 100);
+        }
+        return name;
     }
 
     private static String toClosedName(String currentName) {
-        if (currentName.startsWith("closed-")) {
-            return currentName.length() > 100 ? currentName.substring(0, 100) : currentName;
-        }
-        String name = "closed-" + currentName;
+        String openName = toOpenName(currentName);
+        String name = "closed-" + openName;
         if (name.length() > 100) {
             name = name.substring(0, 100);
         }

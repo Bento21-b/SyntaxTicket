@@ -142,24 +142,50 @@ public class TicketListener extends ListenerAdapter {
     }
 
     private void handleCloseButton(ButtonInteractionEvent event) {
-        if (!(event.getChannel() instanceof TextChannel channel) || !TicketCloseHelper.isOpenTicketChannel(channel)) {
+        if (!(event.getChannel() instanceof TextChannel channel)) {
+            event.reply("ใช้ได้เฉพาะในช่อง Ticket").setEphemeral(true).queue();
+            return;
+        }
+
+        Guild guild = event.getGuild();
+        if (guild == null) {
+            event.reply("ใช้ได้เฉพาะในเซิร์ฟเวอร์").setEphemeral(true).queue();
+            return;
+        }
+
+        TextChannel fresh = guild.getTextChannelById(channel.getId());
+        if (fresh == null || !TicketCloseHelper.isOpenTicketChannel(fresh)) {
             event.reply("ใช้ได้เฉพาะในช่อง Ticket ที่เปิดอยู่").setEphemeral(true).queue();
             return;
         }
 
         Member member = event.getMember();
-        if (!TicketCloseHelper.canCloseTicket(channel, member)) {
+        if (!TicketCloseHelper.canCloseTicket(fresh, member)) {
             event.reply("คุณปิด Ticket นี้ไม่ได้").setEphemeral(true).queue();
             return;
         }
 
-        event.deferReply(true).queue();
-        TicketCloseHelper.closeTicket(
-                channel,
-                event.getGuild(),
-                member,
-                message -> event.getHook().sendMessage(message).queue(),
-                error -> event.getHook().sendMessage(error).queue()
+        String channelId = fresh.getId();
+        if (!TicketCloseHelper.beginProcessing(channelId)) {
+            event.reply("กำลังดำเนินการอยู่ กรุณารอสักครู่").setEphemeral(true).queue();
+            return;
+        }
+
+        event.deferReply(true).queue(
+                success -> TicketCloseHelper.closeTicket(
+                        fresh,
+                        guild,
+                        member,
+                        message -> {
+                            TicketCloseHelper.endProcessing(channelId);
+                            event.getHook().sendMessage(message).queue();
+                        },
+                        error -> {
+                            TicketCloseHelper.endProcessing(channelId);
+                            event.getHook().sendMessage(error).queue();
+                        }
+                ),
+                error -> TicketCloseHelper.endProcessing(channelId)
         );
     }
 
@@ -219,13 +245,27 @@ public class TicketListener extends ListenerAdapter {
             return;
         }
 
-        event.deferReply(true).queue();
-        TicketCloseHelper.reopenTicket(
-                channel,
-                guild,
-                member,
-                message -> event.getHook().sendMessage(message).queue(),
-                error -> event.getHook().sendMessage(error).queue()
+        String channelId = channel.getId();
+        if (!TicketCloseHelper.beginProcessing(channelId)) {
+            event.reply("กำลังดำเนินการอยู่ กรุณารอสักครู่").setEphemeral(true).queue();
+            return;
+        }
+
+        event.deferReply(true).queue(
+                success -> TicketCloseHelper.reopenTicket(
+                        channel,
+                        guild,
+                        member,
+                        message -> {
+                            TicketCloseHelper.endProcessing(channelId);
+                            event.getHook().sendMessage(message).queue();
+                        },
+                        error -> {
+                            TicketCloseHelper.endProcessing(channelId);
+                            event.getHook().sendMessage(error).queue();
+                        }
+                ),
+                error -> TicketCloseHelper.endProcessing(channelId)
         );
     }
 
