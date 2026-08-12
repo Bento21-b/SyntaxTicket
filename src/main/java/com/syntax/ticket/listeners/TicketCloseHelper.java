@@ -157,6 +157,14 @@ final class TicketCloseHelper {
                 || (topic != null && topic.startsWith(CLOSED_TOPIC_PREFIX));
     }
 
+    static boolean isTicketChannel(TextChannel channel) {
+        if (channel == null) {
+            return false;
+        }
+        String name = channel.getName();
+        return name.startsWith("ticket-") || name.startsWith("closed-");
+    }
+
     static void deleteTicket(
             TextChannel channel,
             Guild guild,
@@ -164,8 +172,8 @@ final class TicketCloseHelper {
             Runnable onSuccess,
             Consumer<String> onFailure
     ) {
-        if (!isClosedTicketChannel(channel, guild)) {
-            onFailure.accept("ลบได้เฉพาะ Ticket ในหมวด closeticket");
+        if (!isTicketChannel(channel)) {
+            onFailure.accept("ใช้ได้เฉพาะในช่อง Ticket");
             return;
         }
         if (!CommandListener.canManageTickets(deletedBy)) {

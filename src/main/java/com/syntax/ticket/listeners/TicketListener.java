@@ -207,8 +207,8 @@ public class TicketListener extends ListenerAdapter {
             return;
         }
 
-        if (!TicketCloseHelper.isClosedTicketChannel(channel, guild)) {
-            event.reply("ลบได้เฉพาะ Ticket ที่อยู่ในหมวด closeticket (ปิด Ticket ก่อน)").setEphemeral(true).queue();
+        if (!TicketCloseHelper.isTicketChannel(channel)) {
+            event.reply("ใช้ได้เฉพาะในช่อง Ticket").setEphemeral(true).queue();
             return;
         }
 
