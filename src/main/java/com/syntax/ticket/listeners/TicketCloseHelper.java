@@ -5,6 +5,7 @@ import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
+import net.dv8tion.jda.api.interactions.components.ActionRow;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -102,6 +103,7 @@ final class TicketCloseHelper {
             TextChannel channel,
             Guild guild,
             Member closedBy,
+            ActionRow buttons,
             Consumer<String> onSuccess,
             Consumer<String> onFailure
     ) {
@@ -110,13 +112,14 @@ final class TicketCloseHelper {
             onFailure.accept("ไม่พบช่อง Ticket");
             return;
         }
-        closeFresh(fresh, guild, closedBy, onSuccess, onFailure);
+        closeFresh(fresh, guild, closedBy, buttons, onSuccess, onFailure);
     }
 
     private static void closeFresh(
             TextChannel fresh,
             Guild guild,
             Member closedBy,
+            ActionRow buttons,
             Consumer<String> onSuccess,
             Consumer<String> onFailure
     ) {
@@ -142,35 +145,26 @@ final class TicketCloseHelper {
                 .withZone(ZoneId.of("Asia/Bangkok"))
                 .format(Instant.now());
 
-        Runnable moveToClosed = () -> fresh.getManager()
-                .setParent(closedCategory)
-                .setTopic(closedTopic)
-                .timeout(15, TimeUnit.SECONDS)
-                .queue(
-                        ok -> fresh.sendMessage(
-                                "🔒 Ticket ถูกปิดแล้ว\n"
-                                        + "ปิดโดย: " + closedByMention + "\n"
-                                        + "เวลา: " + time
-                        ).queue(
-                                sent -> onSuccess.accept(
-                                        "ย้าย Ticket ไปหมวด **" + closedCategory.getName() + "** แล้ว"
-                                ),
-                                err -> onSuccess.accept("ย้าย Ticket แล้ว แต่ส่งข้อความปิดไม่สำเร็จ")
-                        ),
-                        error -> onFailure.accept("ปิด Ticket ไม่สำเร็จ: " + error.getMessage())
-                );
-
-        if (ownerId == null || ownerId.isBlank()) {
-            moveToClosed.run();
-            return;
+        var manager = fresh.getManager().setTopic(closedTopic);
+        if (!inClosedCategory(fresh, guild)) {
+            manager = manager.setParent(closedCategory);
         }
 
-        guild.retrieveMemberById(ownerId).timeout(10, TimeUnit.SECONDS).queue(
-                owner -> fresh.upsertPermissionOverride(owner)
-                        .deny(Permission.VIEW_CHANNEL)
-                        .timeout(10, TimeUnit.SECONDS)
-                        .queue(ok -> moveToClosed.run(), err -> moveToClosed.run()),
-                err -> moveToClosed.run()
+        manager.timeout(10, TimeUnit.SECONDS).queue(
+                ok -> {
+                    hideOwner(fresh, guild, ownerId);
+                    fresh.sendMessage(
+                            "🔒 Ticket ถูกปิดแล้ว\n"
+                                    + "ปิดโดย: " + closedByMention + "\n"
+                                    + "เวลา: " + time
+                    ).setComponents(buttons).queue(
+                            sent -> onSuccess.accept(
+                                    "ย้าย Ticket ไปหมวด **" + closedCategory.getName() + "** แล้ว"
+                            ),
+                            err -> onSuccess.accept("ย้าย Ticket แล้ว แต่ส่งข้อความปิดไม่สำเร็จ")
+                    );
+                },
+                error -> onFailure.accept("ปิด Ticket ไม่สำเร็จ: " + error.getMessage())
         );
     }
 
@@ -178,6 +172,7 @@ final class TicketCloseHelper {
             TextChannel channel,
             Guild guild,
             Member reopenedBy,
+            ActionRow buttons,
             Consumer<String> onSuccess,
             Consumer<String> onFailure
     ) {
@@ -186,13 +181,14 @@ final class TicketCloseHelper {
             onFailure.accept("ไม่พบช่อง Ticket");
             return;
         }
-        reopenFresh(fresh, guild, reopenedBy, onSuccess, onFailure);
+        reopenFresh(fresh, guild, reopenedBy, buttons, onSuccess, onFailure);
     }
 
     private static void reopenFresh(
             TextChannel fresh,
             Guild guild,
             Member reopenedBy,
+            ActionRow buttons,
             Consumer<String> onSuccess,
             Consumer<String> onFailure
     ) {
@@ -221,34 +217,50 @@ final class TicketCloseHelper {
         }
 
         String reopenedByMention = reopenedBy == null ? "unknown" : reopenedBy.getAsMention();
-        EnumSet<Permission> allow = CommandListener.ticketPermissions();
 
-        Runnable moveToOpen = () -> fresh.getManager()
-                .setParent(openCategory)
-                .setTopic(ownerId)
-                .timeout(15, TimeUnit.SECONDS)
-                .queue(
-                        ok -> fresh.sendMessage(
-                                "🔓 Ticket ถูกเปิดใหม่แล้ว\n"
-                                        + "เปิดโดย: " + reopenedByMention
-                        ).queue(
-                                sent -> onSuccess.accept("ย้าย Ticket กลับไปหมวดเปิดแล้ว"),
-                                err -> onSuccess.accept("เปิด Ticket แล้ว แต่ส่งข้อความไม่สำเร็จ")
-                        ),
-                        error -> onFailure.accept("เปิด Ticket ไม่สำเร็จ: " + error.getMessage())
-                );
-
-        if (ownerId == null || ownerId.isBlank()) {
-            moveToOpen.run();
-            return;
+        var manager = fresh.getManager().setTopic(ownerId);
+        if (fresh.getParentCategory() == null
+                || !fresh.getParentCategory().getId().equals(openCategory.getId())) {
+            manager = manager.setParent(openCategory);
         }
 
-        guild.retrieveMemberById(ownerId).timeout(10, TimeUnit.SECONDS).queue(
-                owner -> fresh.upsertPermissionOverride(owner)
+        manager.timeout(10, TimeUnit.SECONDS).queue(
+                ok -> {
+                    showOwner(fresh, guild, ownerId);
+                    fresh.sendMessage(
+                            "🔓 Ticket ถูกเปิดใหม่แล้ว\n"
+                                    + "เปิดโดย: " + reopenedByMention
+                    ).setComponents(buttons).queue(
+                            sent -> onSuccess.accept("ย้าย Ticket กลับไปหมวดเปิดแล้ว"),
+                            err -> onSuccess.accept("เปิด Ticket แล้ว แต่ส่งข้อความไม่สำเร็จ")
+                    );
+                },
+                error -> onFailure.accept("เปิด Ticket ไม่สำเร็จ: " + error.getMessage())
+        );
+    }
+
+    private static void hideOwner(TextChannel channel, Guild guild, String ownerId) {
+        if (ownerId == null || ownerId.isBlank()) {
+            return;
+        }
+        guild.retrieveMemberById(ownerId).queue(
+                owner -> channel.upsertPermissionOverride(owner)
+                        .deny(Permission.VIEW_CHANNEL)
+                        .queue(ok -> {}, err -> {}),
+                err -> {}
+        );
+    }
+
+    private static void showOwner(TextChannel channel, Guild guild, String ownerId) {
+        if (ownerId == null || ownerId.isBlank()) {
+            return;
+        }
+        EnumSet<Permission> allow = CommandListener.ticketPermissions();
+        guild.retrieveMemberById(ownerId).queue(
+                owner -> channel.upsertPermissionOverride(owner)
                         .grant(allow)
-                        .timeout(10, TimeUnit.SECONDS)
-                        .queue(ok -> moveToOpen.run(), err -> moveToOpen.run()),
-                err -> moveToOpen.run()
+                        .queue(ok -> {}, err -> {}),
+                err -> {}
         );
     }
 

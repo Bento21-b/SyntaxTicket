@@ -19,6 +19,10 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 public class TicketListener extends ListenerAdapter {
     public static final String CLOSE_BUTTON_ID = "ticket-close-btn";
@@ -175,26 +179,18 @@ public class TicketListener extends ListenerAdapter {
         }
 
         String channelId = fresh.getId();
-        if (!TicketCloseHelper.beginProcessing(channelId)) {
-            event.reply("กำลังดำเนินการอยู่ กรุณารอสักครู่").setEphemeral(true).queue();
-            return;
-        }
-
-        event.deferReply(true).queue(
-                success -> TicketCloseHelper.closeTicket(
+        runChannelAction(
+                event,
+                channelId,
+                "กำลังปิด Ticket...",
+                (onSuccess, onFailure) -> TicketCloseHelper.closeTicket(
                         fresh,
                         guild,
                         member,
-                        message -> {
-                            TicketCloseHelper.endProcessing(channelId);
-                            event.getHook().sendMessage(message).queue();
-                        },
-                        error -> {
-                            TicketCloseHelper.endProcessing(channelId);
-                            event.getHook().sendMessage(error).queue();
-                        }
-                ),
-                error -> TicketCloseHelper.endProcessing(channelId)
+                        ActionRow.of(ticketActionButtons()),
+                        onSuccess,
+                        onFailure
+                )
         );
     }
 
@@ -255,25 +251,56 @@ public class TicketListener extends ListenerAdapter {
         }
 
         String channelId = channel.getId();
+        runChannelAction(
+                event,
+                channelId,
+                "กำลังเปิด Ticket...",
+                (onSuccess, onFailure) -> TicketCloseHelper.reopenTicket(
+                        channel,
+                        guild,
+                        member,
+                        ActionRow.of(ticketActionButtons()),
+                        onSuccess,
+                        onFailure
+                )
+        );
+    }
+
+    private void runChannelAction(
+            ButtonInteractionEvent event,
+            String channelId,
+            String pendingMessage,
+            BiConsumer<Consumer<String>, Consumer<String>> action
+    ) {
         if (!TicketCloseHelper.beginProcessing(channelId)) {
             event.reply("กำลังดำเนินการอยู่ กรุณารอสักครู่").setEphemeral(true).queue();
             return;
         }
 
-        event.deferReply(true).queue(
-                success -> TicketCloseHelper.reopenTicket(
-                        channel,
-                        guild,
-                        member,
-                        message -> {
+        event.reply(pendingMessage).setEphemeral(true).queue(
+                hook -> {
+                    AtomicBoolean done = new AtomicBoolean(false);
+                    action.accept(
+                            message -> {
+                                if (done.compareAndSet(false, true)) {
+                                    TicketCloseHelper.endProcessing(channelId);
+                                    hook.editOriginal(message).queue();
+                                }
+                            },
+                            error -> {
+                                if (done.compareAndSet(false, true)) {
+                                    TicketCloseHelper.endProcessing(channelId);
+                                    hook.editOriginal(error).queue();
+                                }
+                            }
+                    );
+                    event.getJDA().getGatewayPool().schedule(() -> {
+                        if (done.compareAndSet(false, true)) {
                             TicketCloseHelper.endProcessing(channelId);
-                            event.getHook().sendMessage(message).queue();
-                        },
-                        error -> {
-                            TicketCloseHelper.endProcessing(channelId);
-                            event.getHook().sendMessage(error).queue();
+                            hook.editOriginal("ใช้เวลานานเกินไป กรุณากดอีกครั้ง").queue();
                         }
-                ),
+                    }, 12, TimeUnit.SECONDS);
+                },
                 error -> TicketCloseHelper.endProcessing(channelId)
         );
     }

@@ -202,6 +202,7 @@ public class CommandListener extends ListenerAdapter {
                 channel,
                 event.getGuild(),
                 member,
+                ActionRow.of(TicketListener.ticketActionButtons()),
                 message -> event.getHook().sendMessage(message).queue(),
                 error -> event.getHook().sendMessage(error).queue()
         );
