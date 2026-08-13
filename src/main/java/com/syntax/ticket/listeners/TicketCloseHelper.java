@@ -145,24 +145,19 @@ final class TicketCloseHelper {
                 .withZone(ZoneId.of("Asia/Bangkok"))
                 .format(Instant.now());
 
-        var manager = fresh.getManager().setTopic(closedTopic);
-        if (!inClosedCategory(fresh, guild)) {
-            manager = manager.setParent(closedCategory);
-        }
-
-        manager.timeout(10, TimeUnit.SECONDS).queue(
+        fresh.getManager().setTopic(closedTopic).queue(
                 ok -> {
-                    hideOwner(fresh, guild, ownerId);
+                    onSuccess.accept("ย้าย Ticket ไปหมวด **" + closedCategory.getName() + "** แล้ว");
                     fresh.sendMessage(
                             "🔒 Ticket ถูกปิดแล้ว\n"
                                     + "ปิดโดย: " + closedByMention + "\n"
                                     + "เวลา: " + time
-                    ).setComponents(buttons).queue(
-                            sent -> onSuccess.accept(
-                                    "ย้าย Ticket ไปหมวด **" + closedCategory.getName() + "** แล้ว"
-                            ),
-                            err -> onSuccess.accept("ย้าย Ticket แล้ว แต่ส่งข้อความปิดไม่สำเร็จ")
-                    );
+                    ).setComponents(buttons).queue();
+                    hideOwner(fresh, guild, ownerId);
+                    if (!inClosedCategory(fresh, guild)) {
+                        fresh.getManager().setParent(closedCategory).queue(moved -> {}, err ->
+                                System.out.println("move to closeticket failed: " + err.getMessage()));
+                    }
                 },
                 error -> onFailure.accept("ปิด Ticket ไม่สำเร็จ: " + error.getMessage())
         );
@@ -193,7 +188,7 @@ final class TicketCloseHelper {
             Consumer<String> onFailure
     ) {
         if (!isClosedTicketChannel(fresh, guild)) {
-            onFailure.accept("เปิดได้เฉพาะ Ticket ในหมวด closeticket");
+            onFailure.accept("เปิดได้เฉพาะ Ticket ที่ถูกปิดแล้ว");
             return;
         }
         if (!CommandListener.canManageTickets(reopenedBy)) {
@@ -218,22 +213,19 @@ final class TicketCloseHelper {
 
         String reopenedByMention = reopenedBy == null ? "unknown" : reopenedBy.getAsMention();
 
-        var manager = fresh.getManager().setTopic(ownerId);
-        if (fresh.getParentCategory() == null
-                || !fresh.getParentCategory().getId().equals(openCategory.getId())) {
-            manager = manager.setParent(openCategory);
-        }
-
-        manager.timeout(10, TimeUnit.SECONDS).queue(
+        fresh.getManager().setTopic(ownerId).queue(
                 ok -> {
-                    showOwner(fresh, guild, ownerId);
+                    onSuccess.accept("ย้าย Ticket กลับไปหมวดเปิดแล้ว");
                     fresh.sendMessage(
                             "🔓 Ticket ถูกเปิดใหม่แล้ว\n"
                                     + "เปิดโดย: " + reopenedByMention
-                    ).setComponents(buttons).queue(
-                            sent -> onSuccess.accept("ย้าย Ticket กลับไปหมวดเปิดแล้ว"),
-                            err -> onSuccess.accept("เปิด Ticket แล้ว แต่ส่งข้อความไม่สำเร็จ")
-                    );
+                    ).setComponents(buttons).queue();
+                    showOwner(fresh, guild, ownerId);
+                    if (fresh.getParentCategory() == null
+                            || !fresh.getParentCategory().getId().equals(openCategory.getId())) {
+                        fresh.getManager().setParent(openCategory).queue(moved -> {}, err ->
+                                System.out.println("move to open ticket category failed: " + err.getMessage()));
+                    }
                 },
                 error -> onFailure.accept("เปิด Ticket ไม่สำเร็จ: " + error.getMessage())
         );

@@ -29,7 +29,7 @@ public final class Bot {
         if (value == null || value.isBlank()) {
             throw new IllegalStateException("Missing required environment variable: " + name);
         }
-        return value.trim();
+        return cleanEnv(value);
     }
 
     public static String optionalEnv(String name, String fallback) {
@@ -37,6 +37,10 @@ public final class Bot {
         if (value == null || value.isBlank()) {
             return fallback;
         }
-        return value.trim();
+        return cleanEnv(value);
+    }
+
+    private static String cleanEnv(String value) {
+        return value.trim().replace("\"", "").replace("'", "").trim();
     }
 }

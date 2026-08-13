@@ -49,6 +49,13 @@ public class CommandListener extends ListenerAdapter {
                 )
                 .queue();
         System.out.println("Slash commands registered. Bot user: " + event.getJDA().getSelfUser().getAsTag());
+        event.getJDA().getGuilds().forEach(guild -> {
+            Category open = resolveCategory(guild);
+            Category closed = resolveClosedCategory(guild);
+            System.out.println("Guild " + guild.getName()
+                    + " openCategory=" + (open == null ? "NOT FOUND" : open.getName() + ":" + open.getId())
+                    + " closedCategory=" + (closed == null ? "NOT FOUND" : closed.getName() + ":" + closed.getId()));
+        });
     }
 
     @Override
@@ -223,19 +230,57 @@ public class CommandListener extends ListenerAdapter {
     }
 
     static Category resolveCategory(Guild guild) {
+        Category closed = resolveClosedCategory(guild);
         String categoryId = BotConfig.ticketCategoryId();
-        if (categoryId.isBlank()) {
-            return null;
+        if (!categoryId.isBlank()) {
+            Category byId = guild.getCategoryById(categoryId);
+            if (byId != null) {
+                return byId;
+            }
         }
-        return guild.getCategoryById(categoryId);
+        Category exact = null;
+        Category fuzzy = null;
+        for (Category category : guild.getCategories()) {
+            if (closed != null && category.getId().equals(closed.getId())) {
+                continue;
+            }
+            String normalized = normalizeCategoryName(category.getName());
+            if (normalized.equals("ticket")) {
+                exact = category;
+                break;
+            }
+            if (fuzzy == null && normalized.contains("ticket") && !normalized.contains("close")) {
+                fuzzy = category;
+            }
+        }
+        return exact != null ? exact : fuzzy;
     }
 
     static Category resolveClosedCategory(Guild guild) {
         String categoryId = BotConfig.closedTicketCategoryId();
-        if (categoryId.isBlank()) {
-            return null;
+        if (!categoryId.isBlank()) {
+            Category byId = guild.getCategoryById(categoryId);
+            if (byId != null) {
+                return byId;
+            }
         }
-        return guild.getCategoryById(categoryId);
+        for (Category category : guild.getCategories()) {
+            String normalized = normalizeCategoryName(category.getName());
+            if (normalized.equals("closeticket")
+                    || normalized.equals("closedticket")
+                    || normalized.contains("closeticket")
+                    || normalized.contains("closedticket")) {
+                return category;
+            }
+        }
+        return null;
+    }
+
+    private static String normalizeCategoryName(String name) {
+        if (name == null) {
+            return "";
+        }
+        return name.toLowerCase().replaceAll("[^a-z0-9]", "");
     }
 
     static Role resolveSupportRole(Guild guild) {
