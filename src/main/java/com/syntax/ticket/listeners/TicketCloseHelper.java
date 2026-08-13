@@ -11,15 +11,17 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.EnumSet;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 final class TicketCloseHelper {
     static final String CLOSED_TOPIC_PREFIX = "closed:";
-    private static final long LOCK_MS = 20_000L;
+    private static final long LOCK_MS = 1_500L;
 
     private static final ConcurrentHashMap<String, Long> PROCESSING = new ConcurrentHashMap<>();
+    private static final Set<String> CLOSED = ConcurrentHashMap.newKeySet();
 
     private TicketCloseHelper() {}
 
@@ -46,19 +48,15 @@ final class TicketCloseHelper {
     }
 
     static boolean isOpenTicketChannel(TextChannel channel) {
-        if (!isTicketChannel(channel)) {
-            return false;
-        }
-        String topic = channel.getTopic();
-        if (topic != null && topic.startsWith(CLOSED_TOPIC_PREFIX)) {
-            return false;
-        }
-        return !inClosedCategory(channel, channel.getGuild());
+        return isTicketChannel(channel) && !isClosedTicketChannel(channel, channel.getGuild());
     }
 
     static boolean isClosedTicketChannel(TextChannel channel, Guild guild) {
         if (!isTicketChannel(channel) || guild == null) {
             return false;
+        }
+        if (CLOSED.contains(channel.getId())) {
+            return true;
         }
         if (inClosedCategory(channel, guild)) {
             return true;
@@ -112,17 +110,6 @@ final class TicketCloseHelper {
             onFailure.accept("ไม่พบช่อง Ticket");
             return;
         }
-        closeFresh(fresh, guild, closedBy, buttons, onSuccess, onFailure);
-    }
-
-    private static void closeFresh(
-            TextChannel fresh,
-            Guild guild,
-            Member closedBy,
-            ActionRow buttons,
-            Consumer<String> onSuccess,
-            Consumer<String> onFailure
-    ) {
         if (!isOpenTicketChannel(fresh)) {
             onFailure.accept("ช่องนี้ถูกปิดไปแล้ว");
             return;
@@ -134,33 +121,31 @@ final class TicketCloseHelper {
 
         Category closedCategory = CommandListener.resolveClosedCategory(guild);
         if (closedCategory == null) {
-            onFailure.accept("ยังไม่ได้ตั้งค่า CLOSED_TICKET_CATEGORY_ID บน Railway");
+            onFailure.accept("หาหมวด closeticket ไม่เจอ");
             return;
         }
 
+        CLOSED.add(fresh.getId());
         String ownerId = extractOwnerId(fresh.getTopic());
-        String closedTopic = CLOSED_TOPIC_PREFIX + (ownerId == null ? "unknown" : ownerId);
         String closedByMention = closedBy == null ? "unknown" : closedBy.getAsMention();
         String time = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
                 .withZone(ZoneId.of("Asia/Bangkok"))
                 .format(Instant.now());
 
-        fresh.getManager().setTopic(closedTopic).queue(
-                ok -> {
-                    onSuccess.accept("ย้าย Ticket ไปหมวด **" + closedCategory.getName() + "** แล้ว");
-                    fresh.sendMessage(
-                            "🔒 Ticket ถูกปิดแล้ว\n"
-                                    + "ปิดโดย: " + closedByMention + "\n"
-                                    + "เวลา: " + time
-                    ).setComponents(buttons).queue();
-                    hideOwner(fresh, guild, ownerId);
-                    if (!inClosedCategory(fresh, guild)) {
-                        fresh.getManager().setParent(closedCategory).queue(moved -> {}, err ->
-                                System.out.println("move to closeticket failed: " + err.getMessage()));
-                    }
-                },
-                error -> onFailure.accept("ปิด Ticket ไม่สำเร็จ: " + error.getMessage())
-        );
+        onSuccess.accept("ย้าย Ticket ไปหมวด **" + closedCategory.getName() + "** แล้ว");
+        fresh.sendMessage(
+                "🔒 Ticket ถูกปิดแล้ว\n"
+                        + "ปิดโดย: " + closedByMention + "\n"
+                        + "เวลา: " + time
+        ).setComponents(buttons).queue();
+
+        hideOwner(fresh, guild, ownerId);
+        if (!inClosedCategory(fresh, guild)) {
+            fresh.getManager().setParent(closedCategory).queue(
+                    ok -> {},
+                    err -> System.out.println("move to closeticket failed: " + err.getMessage())
+            );
+        }
     }
 
     static void reopenTicket(
@@ -176,17 +161,6 @@ final class TicketCloseHelper {
             onFailure.accept("ไม่พบช่อง Ticket");
             return;
         }
-        reopenFresh(fresh, guild, reopenedBy, buttons, onSuccess, onFailure);
-    }
-
-    private static void reopenFresh(
-            TextChannel fresh,
-            Guild guild,
-            Member reopenedBy,
-            ActionRow buttons,
-            Consumer<String> onSuccess,
-            Consumer<String> onFailure
-    ) {
         if (!isClosedTicketChannel(fresh, guild)) {
             onFailure.accept("เปิดได้เฉพาะ Ticket ที่ถูกปิดแล้ว");
             return;
@@ -207,28 +181,27 @@ final class TicketCloseHelper {
 
         Category openCategory = CommandListener.resolveCategory(guild);
         if (openCategory == null) {
-            onFailure.accept("ยังไม่ได้ตั้งค่า TICKET_CATEGORY_ID บน Railway");
+            onFailure.accept("หาหมวด ticket ไม่เจอ");
             return;
         }
 
+        CLOSED.remove(fresh.getId());
         String reopenedByMention = reopenedBy == null ? "unknown" : reopenedBy.getAsMention();
 
-        fresh.getManager().setTopic(ownerId).queue(
-                ok -> {
-                    onSuccess.accept("ย้าย Ticket กลับไปหมวดเปิดแล้ว");
-                    fresh.sendMessage(
-                            "🔓 Ticket ถูกเปิดใหม่แล้ว\n"
-                                    + "เปิดโดย: " + reopenedByMention
-                    ).setComponents(buttons).queue();
-                    showOwner(fresh, guild, ownerId);
-                    if (fresh.getParentCategory() == null
-                            || !fresh.getParentCategory().getId().equals(openCategory.getId())) {
-                        fresh.getManager().setParent(openCategory).queue(moved -> {}, err ->
-                                System.out.println("move to open ticket category failed: " + err.getMessage()));
-                    }
-                },
-                error -> onFailure.accept("เปิด Ticket ไม่สำเร็จ: " + error.getMessage())
-        );
+        onSuccess.accept("ย้าย Ticket กลับไปหมวดเปิดแล้ว");
+        fresh.sendMessage(
+                "🔓 Ticket ถูกเปิดใหม่แล้ว\n"
+                        + "เปิดโดย: " + reopenedByMention
+        ).setComponents(buttons).queue();
+
+        showOwner(fresh, guild, ownerId);
+        if (fresh.getParentCategory() == null
+                || !fresh.getParentCategory().getId().equals(openCategory.getId())) {
+            fresh.getManager().setParent(openCategory).queue(
+                    ok -> {},
+                    err -> System.out.println("move to open ticket category failed: " + err.getMessage())
+            );
+        }
     }
 
     private static void hideOwner(TextChannel channel, Guild guild, String ownerId) {
@@ -272,6 +245,7 @@ final class TicketCloseHelper {
             return;
         }
 
+        CLOSED.remove(channel.getId());
         String deletedByName = deletedBy == null ? "unknown" : deletedBy.getEffectiveName();
         channel.delete().reason("Ticket deleted by " + deletedByName)
                 .timeout(15, TimeUnit.SECONDS)
