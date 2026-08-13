@@ -163,14 +163,14 @@ public class TicketListener extends ListenerAdapter {
         }
 
         TextChannel fresh = guild.getTextChannelById(channel.getId());
-        if (fresh == null || !TicketCloseHelper.isOpenTicketChannel(fresh)) {
-            event.reply("ใช้ได้เฉพาะในช่อง Ticket ที่เปิดอยู่").setEphemeral(true).queue();
+        if (fresh == null || !TicketCloseHelper.isTicketChannel(fresh)) {
+            event.reply("ใช้ได้เฉพาะในช่อง Ticket").setEphemeral(true).queue();
             return;
         }
 
         Member member = event.getMember();
-        if (!TicketCloseHelper.canCloseTicket(fresh, member)) {
-            event.reply("คุณปิด Ticket นี้ไม่ได้").setEphemeral(true).queue();
+        if (member == null) {
+            event.reply("ใช้ได้เฉพาะในเซิร์ฟเวอร์").setEphemeral(true).queue();
             return;
         }
 
@@ -249,8 +249,8 @@ public class TicketListener extends ListenerAdapter {
             return;
         }
 
-        if (!TicketCloseHelper.isClosedTicketChannel(channel, guild)) {
-            event.reply("เปิดได้เฉพาะ Ticket ในหมวด closeticket").setEphemeral(true).queue();
+        if (!TicketCloseHelper.isTicketChannel(channel)) {
+            event.reply("ใช้ได้เฉพาะในช่อง Ticket").setEphemeral(true).queue();
             return;
         }
 
