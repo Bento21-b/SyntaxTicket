@@ -26,6 +26,19 @@ import java.util.List;
 public class CommandListener extends ListenerAdapter {
     public static final String SELECT_MENU_ID = "ticket-topic";
 
+    public static StringSelectMenu buildSelectMenu() {
+        StringSelectMenu.Builder menu = StringSelectMenu.create(SELECT_MENU_ID)
+                .setPlaceholder(BotConfig.selectPlaceholder());
+        for (BotConfig.TicketOption option : BotConfig.selectOptions()) {
+            if (option.description() == null || option.description().isBlank()) {
+                menu.addOption(option.label(), option.value());
+            } else {
+                menu.addOption(option.label(), option.value(), option.description());
+            }
+        }
+        return menu.build();
+    }
+
     @Override
     public void onReady(ReadyEvent event) {
         event.getJDA().updateCommands()
@@ -82,15 +95,7 @@ public class CommandListener extends ListenerAdapter {
             List<BotConfig.TicketOption> options
     ) {
         EmbedBuilder embed = BotConfig.panelEmbed();
-        StringSelectMenu.Builder menu = StringSelectMenu.create(SELECT_MENU_ID)
-                .setPlaceholder(BotConfig.selectPlaceholder());
-        for (BotConfig.TicketOption option : options) {
-            if (option.description() == null || option.description().isBlank()) {
-                menu.addOption(option.label(), option.value());
-            } else {
-                menu.addOption(option.label(), option.value(), option.description());
-            }
-        }
+        StringSelectMenu menu = buildSelectMenu();
 
         channel.getIterableHistory()
                 .takeAsync(50)
@@ -104,7 +109,7 @@ public class CommandListener extends ListenerAdapter {
                     }
 
                     Runnable postPanel = () -> channel.sendMessageEmbeds(embed.build())
-                            .setActionRow(menu.build())
+                            .setActionRow(menu)
                             .queue(
                                     sent -> {
                                         event.getHook().sendMessage(
@@ -132,7 +137,7 @@ public class CommandListener extends ListenerAdapter {
                 })
                 .exceptionally(err -> {
                     channel.sendMessageEmbeds(embed.build())
-                            .setActionRow(menu.build())
+                            .setActionRow(menu)
                             .queue(sent -> dedupePanelsKeepNewest(channel, event.getJDA().getSelfUser().getIdLong()));
                     event.getHook().sendMessage(
                             "โพสต์แผง Ticket แล้ว (ลบแผงเก่าไม่สำเร็จ: " + err.getMessage() + ")"

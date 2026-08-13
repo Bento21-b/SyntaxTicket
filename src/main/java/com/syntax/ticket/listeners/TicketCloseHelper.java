@@ -33,15 +33,15 @@ final class TicketCloseHelper {
         if (channel == null) {
             return false;
         }
-        if (isClosedTicketChannel(channel, channel.getGuild())) {
-            return false;
-        }
         String name = channel.getName();
-        if (!name.startsWith("ticket-")) {
+        if (name.startsWith("closed-") || !name.startsWith("ticket-")) {
             return false;
         }
         String topic = channel.getTopic();
-        return topic == null || !topic.startsWith(CLOSED_TOPIC_PREFIX);
+        if (topic != null && topic.startsWith(CLOSED_TOPIC_PREFIX)) {
+            return false;
+        }
+        return !isClosedTicketChannel(channel, channel.getGuild());
     }
 
     static String findOpenTicketId(Guild guild, String userId) {

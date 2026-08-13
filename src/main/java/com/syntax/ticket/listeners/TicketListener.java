@@ -11,6 +11,7 @@ import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
+import net.dv8tion.jda.api.interactions.components.ActionRow;
 import net.dv8tion.jda.api.interactions.components.buttons.Button;
 import net.dv8tion.jda.api.requests.restaction.ChannelAction;
 
@@ -63,21 +64,29 @@ public class TicketListener extends ListenerAdapter {
         String lockKey = guild.getId() + ":" + member.getId();
         String existing = TicketCloseHelper.findOpenTicketId(guild, member.getId());
         if (existing != null) {
-            event.reply("คุณมี Ticket เปิดอยู่แล้ว: <#" + existing + ">").setEphemeral(true).queue();
+            resetSelectMenu(event, "คุณมี Ticket เปิดอยู่แล้ว: <#" + existing + ">");
             return;
         }
 
         if (!OPENING.add(lockKey)) {
-            event.reply("กำลังสร้าง Ticket ให้อยู่แล้ว กรุณารอสักครู่").setEphemeral(true).queue();
+            resetSelectMenu(event, "กำลังสร้าง Ticket ให้อยู่แล้ว กรุณารอสักครู่");
             return;
         }
 
-        event.deferReply(true).queue(
+        // รีเซ็ต dropdown ทันที ไม่งั้น Discord ค้างตัวเลือกเดิม กดรอบสองไม่ได้
+        event.editComponents(ActionRow.of(CommandListener.buildSelectMenu())).queue(
                 success -> createTicketChannel(event, guild, member, selected, lockKey),
                 error -> {
                     OPENING.remove(lockKey);
                     System.out.println("ticket open skipped (another instance handled it): " + error.getMessage());
                 }
+        );
+    }
+
+    private void resetSelectMenu(StringSelectInteractionEvent event, String message) {
+        event.editComponents(ActionRow.of(CommandListener.buildSelectMenu())).queue(
+                success -> event.getHook().sendMessage(message).setEphemeral(true).queue(),
+                error -> event.reply(message).setEphemeral(true).queue()
         );
     }
 
@@ -92,7 +101,7 @@ public class TicketListener extends ListenerAdapter {
         String existingAfter = TicketCloseHelper.findOpenTicketId(guild, member.getId());
         if (existingAfter != null) {
             OPENING.remove(lockKey);
-            event.getHook().sendMessage("คุณมี Ticket เปิดอยู่แล้ว: <#" + existingAfter + ">").queue();
+            event.getHook().sendMessage("คุณมี Ticket เปิดอยู่แล้ว: <#" + existingAfter + ">").setEphemeral(true).queue();
             return;
         }
 
@@ -121,7 +130,7 @@ public class TicketListener extends ListenerAdapter {
                 },
                 error -> {
                     OPENING.remove(lockKey);
-                    event.getHook().sendMessage("สร้าง Ticket ไม่สำเร็จ: " + error.getMessage()).queue();
+                    event.getHook().sendMessage("สร้าง Ticket ไม่สำเร็จ: " + error.getMessage()).setEphemeral(true).queue();
                 }
         );
     }
@@ -289,7 +298,7 @@ public class TicketListener extends ListenerAdapter {
 
         event.getHook().sendMessage(
                 "เปิด Ticket **" + selected.label() + "** แล้ว: " + channel.getAsMention()
-        ).queue();
+        ).setEphemeral(true).queue();
     }
 
     /** ชื่อห้องไม่ซ้ำ: ticket-{ชื่อ}-xxxxxx (ท้ายจาก User ID) */
@@ -310,7 +319,8 @@ public class TicketListener extends ListenerAdapter {
             suffix = suffix.substring(suffix.length() - 6);
         }
 
-        String name = "ticket-" + cleaned + "-" + suffix;
+        String unique = Long.toString(System.currentTimeMillis() % 100000, 36);
+        String name = "ticket-" + cleaned + "-" + suffix + "-" + unique;
         if (name.length() > 90) {
             name = name.substring(0, 90);
         }
