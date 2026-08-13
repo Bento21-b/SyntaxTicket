@@ -94,20 +94,36 @@ public final class BotConfig {
         );
         options.add(new TicketOption(sanitizeValue(value1, "option-1"), label1, desc1));
 
-        for (int i = 2; i <= 25; i++) {
+        addOption(options, 2, "Reset", "เปิด Ticket สำหรับรีเซต", "reset");
+        addOption(options, 3, "สอบถามทั่วไป", "เปิด Ticket เพื่อสอบถาม", "general");
+
+        for (int i = 4; i <= 25; i++) {
             String label = Bot.optionalEnv("PANEL_SELECT_LABEL_" + i, "");
             if (label.isBlank()) {
                 break;
             }
             String desc = Bot.optionalEnv("PANEL_SELECT_DESCRIPTION_" + i, "");
-            String value = Bot.optionalEnv("PANEL_SELECT_VALUE_" + i, "");
-            if (value.isBlank()) {
-                value = "option-" + i;
-            }
+            String value = Bot.optionalEnv("PANEL_SELECT_VALUE_" + i, "option-" + i);
             options.add(new TicketOption(sanitizeValue(value, "option-" + i), label, desc));
         }
 
         return options;
+    }
+
+    private static void addOption(
+            List<TicketOption> options,
+            int index,
+            String defaultLabel,
+            String defaultDescription,
+            String defaultValue
+    ) {
+        String label = Bot.optionalEnv("PANEL_SELECT_LABEL_" + index, defaultLabel);
+        if (label.isBlank()) {
+            return;
+        }
+        String desc = Bot.optionalEnv("PANEL_SELECT_DESCRIPTION_" + index, defaultDescription);
+        String value = Bot.optionalEnv("PANEL_SELECT_VALUE_" + index, defaultValue);
+        options.add(new TicketOption(sanitizeValue(value, "option-" + index), label, desc));
     }
 
     public static TicketOption findOption(String value) {
