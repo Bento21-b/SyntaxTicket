@@ -18,6 +18,7 @@ import net.dv8tion.jda.api.interactions.commands.build.Commands;
 import net.dv8tion.jda.api.interactions.components.ActionComponent;
 import net.dv8tion.jda.api.interactions.components.ActionRow;
 import net.dv8tion.jda.api.interactions.components.selections.StringSelectMenu;
+import net.dv8tion.jda.api.utils.FileUpload;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -115,15 +116,13 @@ public class CommandListener extends ListenerAdapter {
                         }
                     }
 
-                    Runnable postPanel = () -> channel.sendMessageEmbeds(embed.build())
-                            .setActionRow(menu)
+                    Runnable postPanel = () -> sendPanel(channel, embed, menu)
                             .queue(
                                     sent -> {
                                         event.getHook().sendMessage(
                                                 "โพสต์แผง Ticket แล้ว (" + options.size() + " หัวข้อ)"
                                                         + (oldPanels.isEmpty() ? "" : " · ลบแผงเก่า " + oldPanels.size() + " อัน")
                                         ).queue();
-                                        // กันแผงซ้ำจากบอทซ้อน: เหลือไว้แค่แผงล่าสุด
                                         dedupePanelsKeepNewest(channel, event.getJDA().getSelfUser().getIdLong());
                                     },
                                     error -> event.getHook().sendMessage(
@@ -143,8 +142,7 @@ public class CommandListener extends ListenerAdapter {
                             .whenComplete((ok, err) -> postPanel.run());
                 })
                 .exceptionally(err -> {
-                    channel.sendMessageEmbeds(embed.build())
-                            .setActionRow(menu)
+                    sendPanel(channel, embed, menu)
                             .queue(sent -> dedupePanelsKeepNewest(channel, event.getJDA().getSelfUser().getIdLong()));
                     event.getHook().sendMessage(
                             "โพสต์แผง Ticket แล้ว (ลบแผงเก่าไม่สำเร็จ: " + err.getMessage() + ")"
@@ -185,6 +183,19 @@ public class CommandListener extends ListenerAdapter {
             }
         }
         return false;
+    }
+
+    private net.dv8tion.jda.api.requests.restaction.MessageCreateAction sendPanel(
+            MessageChannel channel,
+            EmbedBuilder embed,
+            StringSelectMenu menu
+    ) {
+        var action = channel.sendMessageEmbeds(embed.build()).setActionRow(menu);
+        FileUpload image = BotConfig.panelImageUpload();
+        if (image != null) {
+            action = action.setFiles(image);
+        }
+        return action;
     }
 
     private void handleClose(SlashCommandInteractionEvent event) {

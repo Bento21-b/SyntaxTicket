@@ -2,8 +2,10 @@ package com.syntax.ticket.config;
 
 import com.syntax.ticket.Bot;
 import net.dv8tion.jda.api.EmbedBuilder;
+import net.dv8tion.jda.api.utils.FileUpload;
 
 import java.awt.Color;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -42,6 +44,30 @@ public final class BotConfig {
 
     public static String panelImageUrl() {
         return Bot.optionalEnv("PANEL_IMAGE_URL", "");
+    }
+
+    public static boolean useBundledPanelImage() {
+        String url = panelImageUrl();
+        if (url.isBlank()) {
+            return true;
+        }
+        String lower = url.toLowerCase(Locale.ROOT);
+        return lower.contains("discordapp.net") || lower.contains("discord.com/attachments");
+    }
+
+    public static FileUpload panelImageUpload() {
+        if (!useBundledPanelImage()) {
+            return null;
+        }
+        try (InputStream in = BotConfig.class.getResourceAsStream("/panel.gif")) {
+            if (in == null) {
+                return null;
+            }
+            return FileUpload.fromData(in.readAllBytes(), "panel.gif");
+        } catch (Exception e) {
+            System.out.println("load panel.gif failed: " + e.getMessage());
+            return null;
+        }
     }
 
     public static String panelThumbnailUrl() {
@@ -167,8 +193,13 @@ public final class BotConfig {
                 .setDescription(panelDescription())
                 .setColor(panelColor());
 
-        applyUrl(embed::setImage, panelImageUrl());
         applyUrl(embed::setThumbnail, panelThumbnailUrl());
+
+        if (useBundledPanelImage() && BotConfig.class.getResource("/panel.gif") != null) {
+            embed.setImage("attachment://panel.gif");
+        } else {
+            applyUrl(embed::setImage, panelImageUrl());
+        }
 
         String author = panelAuthorName();
         if (!author.isBlank()) {
